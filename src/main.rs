@@ -92,8 +92,12 @@ async fn main() -> Result<(), Error> {
             break;
         }
 
+        if available_shares.len() < k {
+            return Err(Error::from(format!("there are less shares available than threshold ({} < {})", available_shares.len(), k)));
+        }
+
         if available_shares.is_empty() {
-            return Err(Error::from(format!("need more shares! n={}", i)));
+            return Err(Error::from(format!("need more shares! n={} k={}", used_shares.len(), k)));
         }
 
         // Grab more shares
