@@ -1,7 +1,7 @@
 #![allow(clippy::manual_strip)]
 
 use std::{
-    fs,
+    env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -14,15 +14,155 @@ use crypto_box::{
 use ed25519_compact::x25519::KeyPair;
 use rand::RngCore;
 
+mod duo;
 #[gf256::shamir::shamir]
 pub mod shamir {}
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-fn main() {
-    if let Err(err) = entrypoint() {
-        panic!("uncaught error: {:?}", err);
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let duo_domain = env::var("SSS_DUO_DOMAIN")?;
+    let duo_ikey = env::var("SSS_DUO_IKEY")?;
+    let duo_skey = env::var("SSS_DUO_SKEY")?;
+
+    let duo_user_ids = env::var("SSS_DUO_USER_IDS").map(|v| {
+        let mut ids = Vec::new();
+        for id in v.split(',') {
+            ids.push(String::from(id));
+        }
+        ids
+    })?;
+
+    let n = duo_user_ids.len();
+    if n < 1 {
+        return Err(Error::from("no user ids"));
     }
+    let k = std::cmp::max((n / 3) * 2, 1);
+
+    let data_dir = PathBuf::from("./data");
+    let shares_dir = PathBuf::from("./shares");
+
+    if fs::metadata(&shares_dir).is_err() {
+        rotate_sss(&shares_dir, n, k, None)?;
+    }
+
+    // Collect shares
+    let mut available_shares: Vec<Vec<u8>> = vec![];
+    for entry in fs::read_dir(&shares_dir).context("failed to read shares dir")? {
+        let share_file = entry?;
+        if !share_file.file_type()?.is_file() {
+            continue;
+        }
+
+        if !share_file
+            .file_name()
+            .into_string()
+            .unwrap()
+            .starts_with("share_")
+        {
+            continue;
+        }
+
+        let share = hex::decode(fs::read(share_file.path())?)?;
+        available_shares.push(share);
+    }
+    println!("found n={} shares", available_shares.len());
+
+    // Read public key from file
+    let expected_pubkey = hex::decode(fs::read(shares_dir.join("pubkey"))?)?;
+    let expected_checksum = String::from_utf8(fs::read(shares_dir.join("sum"))?)?;
+
+    // Reconstruct key
+    let mut reconstructed_sk: Vec<u8>;
+    let mut used_shares: Vec<Vec<u8>> = vec![];
+
+    let mut i = 0;
+    loop {
+        // Try reconstructing with current shares
+        reconstructed_sk = shamir::reconstruct::<Vec<u8>>(&used_shares);
+
+        // If we've got valid secret key, we're good
+        if sha256::digest(&reconstructed_sk) == expected_checksum {
+            println!(
+                "used n={} shares out of m={}",
+                i,
+                available_shares.len() + used_shares.len()
+            );
+            break;
+        }
+
+        if available_shares.is_empty() {
+            return Err(Error::from(format!("need more shares! n={}", i)));
+        }
+
+        // Grab more shares
+        let duo_user_id = duo_user_ids.get(i).context("ran out of user ids")?;
+        let duo_client = duo::DuoClient::new(
+            duo_domain.clone(),
+            duo_ikey.clone(),
+            duo_skey.clone(),
+            duo_user_id.into(),
+        );
+
+        let auth_result = duo_client.request_auth(i + 1).await?;
+        if auth_result {
+            println!("user approved share {}", i + 1);
+            used_shares.push(available_shares.remove(0));
+        } else {
+            println!("user rejected share {}, skipping this one", i + 1);
+            // just remove it
+            available_shares.remove(0);
+            //return Err(Error::from(format!("auth result failed, exiting")));
+        }
+
+        i += 1;
+    }
+
+    // Grab public key from private
+    let sk = ed25519_compact::x25519::SecretKey::from_slice(&reconstructed_sk)?;
+    let kp = ed25519_compact::x25519::KeyPair {
+        pk: sk.recover_public_key()?,
+        sk,
+    };
+
+    println!("expected pubkey={}", hex::encode(expected_pubkey));
+    println!("reconstr pubkey={}", hex::encode(kp.pk.to_vec()));
+
+    if fs::metadata(data_dir.join("box")).is_err() {
+        fs::create_dir_all(&data_dir)?;
+
+        let payload = br#"
+        {
+            "key": "11-22-33-44-55"
+        }
+        "#;
+
+        let mut nonce = vec![0; 24];
+        rand::thread_rng().fill_bytes(&mut nonce);
+
+        fs::write(data_dir.join("box.nonce"), &nonce)?;
+        let nv: [u8; 24] = nonce.try_into().unwrap();
+
+        let nonce = GenericArray::from(nv);
+        let encrypted = new_salsabox(&kp)
+            .encrypt(&nonce, &payload[..])
+            .context("failed to encrypt data")?;
+
+        fs::write(data_dir.join("box"), encrypted)?;
+    }
+
+    let decrypted = decrypt_box(data_dir.join("box"), data_dir.join("box.nonce"), &kp)?;
+    println!("encrypted data={}", String::from_utf8(decrypted)?);
+
+    // if i < 10 {
+    //     rotate_sss(&shares_dir, i + 2 + 3, i + 2, Some(kp))?;
+    // } else {
+    //     rotate_sss(&shares_dir, i, i - 3, Some(kp))?;
+    // }
+    rotate_sss(&shares_dir, n, k, Some(kp))?;
+
+    Ok(())
 }
 
 fn rotate_sss(
@@ -87,108 +227,4 @@ fn decrypt_box(
     new_salsabox(kp)
         .decrypt(&nonce, &*ciphertext)
         .map_err(|e| e.into())
-}
-
-fn entrypoint() -> Result<(), Error> {
-    let shares_dir = PathBuf::from("./shares");
-
-    if fs::metadata(&shares_dir).is_err() {
-        rotate_sss(&shares_dir, 1, 1, None)?;
-    }
-
-    // Collect shares
-    let mut available_shares: Vec<Vec<u8>> = vec![];
-    for entry in fs::read_dir(&shares_dir).context("failed to read shares dir")? {
-        let share_file = entry?;
-        if !share_file.file_type()?.is_file() {
-            continue;
-        }
-
-        if !share_file
-            .file_name()
-            .into_string()
-            .unwrap()
-            .starts_with("share_")
-        {
-            continue;
-        }
-
-        let share = hex::decode(fs::read(share_file.path())?)?;
-        available_shares.push(share);
-    }
-    println!("found n={} shares", available_shares.len());
-
-    // Read public key from file
-    let expected_pubkey = hex::decode(fs::read(shares_dir.join("pubkey"))?)?;
-    let expected_checksum = String::from_utf8(fs::read(shares_dir.join("sum"))?)?;
-
-    // Reconstruct key
-    let mut reconstructed_sk: Vec<u8>;
-    let mut used_shares: Vec<Vec<u8>> = vec![];
-
-    let mut i = 0;
-    loop {
-        // Try reconstructing with current shares
-        reconstructed_sk = shamir::reconstruct::<Vec<u8>>(&used_shares);
-
-        // If we've got valid secret key, we're good
-        if sha256::digest(&reconstructed_sk) == expected_checksum {
-            println!(
-                "used n={} shares out of m={}",
-                i,
-                available_shares.len() + used_shares.len()
-            );
-            break;
-        }
-
-        if available_shares.is_empty() {
-            return Err(Error::from(format!("need more shares! n={}", i)));
-        }
-
-        // Grab more shares
-        used_shares.push(available_shares.remove(0));
-        i += 1;
-    }
-
-    // Grab public key from private
-    let sk = ed25519_compact::x25519::SecretKey::from_slice(&reconstructed_sk)?;
-    let kp = ed25519_compact::x25519::KeyPair {
-        pk: sk.recover_public_key()?,
-        sk,
-    };
-
-    println!("expected pubkey={}", hex::encode(expected_pubkey));
-    println!("reconstr pubkey={}", hex::encode(kp.pk.to_vec()));
-
-    if fs::metadata(shares_dir.join("box")).is_err() {
-        let payload = br#"
-        {
-            "key": "11-22-33-44-55"
-        }
-        "#;
-
-        let mut nonce = vec![0; 24];
-        rand::thread_rng().fill_bytes(&mut nonce);
-
-        fs::write(shares_dir.join("box.nonce"), &nonce)?;
-        let nv: [u8; 24] = nonce.try_into().unwrap();
-
-        let nonce = GenericArray::from(nv);
-        let encrypted = new_salsabox(&kp)
-            .encrypt(&nonce, &payload[..])
-            .context("failed to encrypt data")?;
-
-        fs::write(shares_dir.join("box"), encrypted)?;
-    }
-
-    let decrypted = decrypt_box(shares_dir.join("box"), shares_dir.join("box.nonce"), &kp)?;
-    println!("encrypted data={}", String::from_utf8(decrypted)?);
-
-    if i < 10 {
-        rotate_sss(&shares_dir, i + 2 + 3, i + 2, Some(kp))?;
-    } else {
-        rotate_sss(&shares_dir, i, i - 3, Some(kp))?;
-    }
-
-    Ok(())
 }

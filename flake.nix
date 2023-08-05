@@ -25,6 +25,9 @@
         devShell = pkgs.mkShell {
           packages = [
 
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+            pkgs.darwin.apple_sdk.frameworks.Security
           ];
         };
       });

@@ -163,4 +163,5 @@ tramp
 !.env.example
 
 # Project specific files
+/data
 /shares
