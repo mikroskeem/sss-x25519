@@ -1,5 +1,6 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
+use anyhow::Context;
 use reqwest::{Method, StatusCode, Url};
 use serde::Deserialize;
 
@@ -12,7 +13,7 @@ use crate::Error;
 pub struct DuoClient(Arc<DuoClientInner>);
 
 struct DuoClientInner {
-    api_domain: String,
+    base_url: Url,
     ikey: String,
     skey: String,
 
@@ -31,9 +32,17 @@ struct DuoResponse<T> {
 
 impl DuoClient {
     pub fn new(api_domain: String, ikey: String, skey: String) -> Result<DuoClient, Error> {
+        let base_url = Url::parse(&api_domain)?;
+
+        // Fail fast when there's no domain
+        let _ = base_url
+            .host_str()
+            .context("No domain in provided api_domain")?
+            .to_string();
+
         let client = reqwest::Client::new();
         Ok(DuoClient(Arc::new(DuoClientInner {
-            api_domain,
+            base_url,
             ikey,
             skey,
             client,
@@ -44,13 +53,13 @@ impl DuoClient {
         let this = Arc::clone(&self.0);
 
         async move {
-            let url = Url::parse(format!("https://{}", this.api_domain).as_str())?;
-            let request =
-                DuoRequest::new(url, Method::GET, "/auth/v2/check", Parameters::default()).build(
-                    &this.client,
-                    &this.ikey,
-                    &this.skey,
-                )?;
+            let request = DuoRequest::new(
+                this.base_url.clone(),
+                Method::GET,
+                "/auth/v2/check",
+                Parameters::default(),
+            )
+            .build(&this.client, &this.ikey, &this.skey)?;
 
             let response = this.client.execute(request).await?;
             if response.status() != StatusCode::OK {
@@ -106,16 +115,16 @@ impl DuoClient {
         this: Arc<DuoClientInner>,
         user_id: S,
     ) -> Result<PreauthResponse, Error> {
-        let url = Url::parse(format!("https://{}", this.api_domain).as_str())?;
-
         let mut parameters = Parameters::default();
         parameters.set("user_id", user_id);
 
-        let request = DuoRequest::new(url, Method::POST, "/auth/v2/preauth", parameters).build(
-            &this.client,
-            &this.ikey,
-            &this.skey,
-        )?;
+        let request = DuoRequest::new(
+            this.base_url.clone(),
+            Method::POST,
+            "/auth/v2/preauth",
+            parameters,
+        )
+        .build(&this.client, &this.ikey, &this.skey)?;
 
         let response = this.client.execute(request).await?;
         if response.status() != StatusCode::OK {
@@ -135,8 +144,6 @@ impl DuoClient {
         user_id: S,
         share_n: usize,
     ) -> Result<String, Error> {
-        let url = Url::parse(format!("https://{}", this.api_domain).as_str())?;
-
         let mut parameters = Parameters::default();
         parameters.set("user_id", user_id);
         parameters.set("factor", "auto");
@@ -145,11 +152,13 @@ impl DuoClient {
         parameters.set("device", "auto");
         parameters.set("display_username", format!("Share {}", share_n));
 
-        let request = DuoRequest::new(url, Method::POST, "/auth/v2/auth", parameters).build(
-            &this.client,
-            &this.ikey,
-            &this.skey,
-        )?;
+        let request = DuoRequest::new(
+            this.base_url.clone(),
+            Method::POST,
+            "/auth/v2/auth",
+            parameters,
+        )
+        .build(&this.client, &this.ikey, &this.skey)?;
 
         let response = this.client.execute(request).await?;
         if response.status() != StatusCode::OK {
@@ -174,16 +183,16 @@ impl DuoClient {
         this: Arc<DuoClientInner>,
         txid: &str,
     ) -> Result<Option<bool>, Error> {
-        let url = Url::parse(format!("https://{}", this.api_domain).as_str())?;
-
         let mut parameters = Parameters::default();
         parameters.set("txid", txid);
 
-        let request = DuoRequest::new(url, Method::GET, "/auth/v2/auth_status", parameters).build(
-            &this.client,
-            &this.ikey,
-            &this.skey,
-        )?;
+        let request = DuoRequest::new(
+            this.base_url.clone(),
+            Method::GET,
+            "/auth/v2/auth_status",
+            parameters,
+        )
+        .build(&this.client, &this.ikey, &this.skey)?;
 
         let response = this.client.execute(request).await?;
         if response.status() != StatusCode::OK {

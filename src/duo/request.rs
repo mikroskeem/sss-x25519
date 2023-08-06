@@ -15,6 +15,15 @@ impl Parameters {
     pub fn set<K: Into<String>, V: Into<String>>(&mut self, k: K, v: V) {
         self.0.insert(k.into(), v.into());
     }
+
+    pub fn serialize(&self) -> String {
+        self.0
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<String>>()
+            .join("&")
+            .into()
+    }
 }
 
 impl From<Parameters> for BTreeMap<String, String> {
@@ -45,14 +54,7 @@ impl DuoRequest {
     pub fn build(&self, client: &Client, ikey: &str, skey: &str) -> Result<Request, Error> {
         let no_body = matches!(self.method, Method::GET | Method::HEAD);
 
-        let parameters_str = self
-            .parameters
-            .0
-            .iter()
-            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-            .collect::<Vec<String>>()
-            .join("&");
-
+        let parameters_str = self.parameters.serialize();
         let mut url = self.url.clone();
         url.set_path(&self.path);
         if no_body {
@@ -76,12 +78,7 @@ impl DuoRequest {
     }
 
     fn build_signature(&self, skey: &str, parameters_str: &str) -> Result<String, Error> {
-        let domain = self
-            .url
-            .host_str()
-            .to_owned()
-            .context("no host in base url")?
-            .to_string();
+        let domain = self.url.host_str().unwrap().to_string();
 
         let payload = &[
             self.date.to_rfc2822(),
