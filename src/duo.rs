@@ -31,6 +31,24 @@ struct DuoResponse<T> {
     message: Option<String>,
 }
 
+struct Parameters(BTreeMap<String, String>);
+
+impl Parameters {
+    fn new() -> Self {
+        Parameters(BTreeMap::new())
+    }
+
+    fn set<K: Into<String>, V: Into<String>>(&mut self, k: K, v: V) {
+        self.0.insert(k.into(), v.into());
+    }
+}
+
+impl From<Parameters> for BTreeMap<String, String> {
+    fn from(value: Parameters) -> Self {
+        value.0
+    }
+}
+
 impl DuoClient {
     pub fn new(api_domain: String, ikey: String, skey: String, user_id: String) -> DuoClient {
         let client = reqwest::Client::new();
@@ -125,13 +143,13 @@ impl DuoClient {
     }
 
     async fn send_auth_request(this: Arc<DuoClientInner>, share_n: usize) -> Result<String, Error> {
-        let mut parameters = BTreeMap::new();
-        parameters.insert("user_id".into(), this.user_id.clone());
-        parameters.insert("factor".into(), "auto".into());
-        parameters.insert("async".into(), "1".into());
-        parameters.insert("type".into(), "Authorize share".into());
-        parameters.insert("device".into(), "auto".into());
-        parameters.insert("display_username".into(), format!("Share {}", share_n));
+        let mut parameters = Parameters::new();
+        parameters.set("user_id", this.user_id.clone());
+        parameters.set("factor", "auto");
+        parameters.set("async", "1");
+        parameters.set("type", "Authorize share");
+        parameters.set("device", "auto");
+        parameters.set("display_username", format!("Share {}", share_n));
 
         let response = DuoClient::send_request(
             this.clone(),
@@ -139,7 +157,7 @@ impl DuoClient {
             Method::POST,
             Url::parse(format!("https://{}", this.api_domain).as_str())?,
             "/auth/v2/auth".into(),
-            parameters,
+            parameters.into(),
         )
         .await?;
 
@@ -165,8 +183,8 @@ impl DuoClient {
         this: Arc<DuoClientInner>,
         txid: &str,
     ) -> Result<Option<bool>, Error> {
-        let mut parameters = BTreeMap::new();
-        parameters.insert("txid".into(), txid.into());
+        let mut parameters = Parameters::new();
+        parameters.set("txid", txid);
 
         let response = DuoClient::send_request(
             this.clone(),
@@ -174,7 +192,7 @@ impl DuoClient {
             Method::GET,
             Url::parse(format!("https://{}", this.api_domain).as_str())?,
             "/auth/v2/auth_status".into(),
-            parameters,
+            parameters.into(),
         )
         .await?;
 
