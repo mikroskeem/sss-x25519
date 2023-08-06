@@ -115,22 +115,28 @@ async fn main() -> Result<(), Error> {
         // Grab more shares
         let duo_user_id = duo_user_ids.get(i).context("ran out of user ids")?;
 
-        let preauth = duo_client.preauth(duo_user_id).await?;
-        let auth_result = match preauth {
-            duo::types::PreauthResponse::Allow => true,
-            duo::types::PreauthResponse::Deny => false,
-            duo::types::PreauthResponse::Enroll { enroll_portal_url } => {
-                println!("enroll: {}", enroll_portal_url);
-                while let duo::types::PreauthResponse::Enroll { .. } =
-                    duo_client.preauth(duo_user_id).await?
-                {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
+        let auth_result = loop {
+            let result = match duo_client.preauth(duo_user_id).await? {
+                duo::types::PreauthResponse::Allow => true,
+                duo::types::PreauthResponse::Deny => false,
+                duo::types::PreauthResponse::Enroll { enroll_portal_url } => {
+                    println!("enroll: {}", enroll_portal_url);
 
-                // TODO
-                duo_client.auth(duo_user_id, i + 1).await?
-            }
-            duo::types::PreauthResponse::Auth { .. } => duo_client.auth(duo_user_id, i + 1).await?,
+                    // Loop until enroll status changes
+                    while let duo::types::PreauthResponse::Enroll { .. } =
+                        duo_client.preauth(duo_user_id).await?
+                    {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+
+                    continue;
+                }
+                duo::types::PreauthResponse::Auth { .. } => {
+                    duo_client.auth(duo_user_id, i + 1).await?
+                }
+            };
+
+            break result;
         };
 
         if auth_result {
