@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use anyhow::Context;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use reqwest::{Client, Method, Request, Url};
