@@ -6,7 +6,6 @@ use hmac::{Hmac, Mac};
 use reqwest::{Method, Response, StatusCode, Url};
 use serde::Deserialize;
 use sha1::Sha1;
-use url::form_urlencoded::Serializer;
 
 use crate::Error;
 
@@ -88,20 +87,16 @@ impl DuoClient {
     ) -> Result<Response, Error> {
         let no_body = matches!(method, Method::GET | Method::HEAD);
 
-        let body_str = {
-            let mut ser = Serializer::new(String::new());
-            for (k, v) in parameters.iter() {
-                ser.append_pair(k, v);
-            }
-
-            // XXX: Duo doesn't like "+" as replacement for space
-            ser.finish().replace('+', "%20")
-        };
+        let parameters_str = parameters
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<String>>()
+            .join("&");
 
         let mut url = base_url.clone();
         url.set_path(&path);
         if no_body {
-            url.set_query(Some(&body_str.clone()));
+            url.set_query(Some(&parameters_str.clone()));
         }
 
         let signature = {
@@ -116,7 +111,7 @@ impl DuoClient {
                 method.to_string().to_uppercase(),
                 domain,
                 path,
-                body_str.clone(),
+                parameters_str.clone(),
             ]
             .join("\n");
 
@@ -136,7 +131,7 @@ impl DuoClient {
         if !no_body {
             rb = rb
                 .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(body_str)
+                .body(parameters_str)
         }
 
         Ok(rb.send().await?)
