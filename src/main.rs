@@ -40,6 +40,9 @@ async fn main() -> Result<(), Error> {
     }
     let k = std::cmp::max((n / 3) * 2, 1);
 
+    let duo_client = duo::DuoClient::new(duo_domain.clone(), duo_ikey.clone(), duo_skey.clone())?;
+    let _ = duo_client.check().await?;
+
     let data_dir = PathBuf::from("./data");
     let shares_dir = PathBuf::from("./shares");
 
@@ -92,10 +95,10 @@ async fn main() -> Result<(), Error> {
             break;
         }
 
-        if available_shares.len() < k {
+        if available_shares.len() + used_shares.len() < k {
             return Err(Error::from(format!(
                 "there are less shares available than threshold ({} < {})",
-                available_shares.len(),
+                available_shares.len() + used_shares.len(),
                 k
             )));
         }
@@ -110,14 +113,8 @@ async fn main() -> Result<(), Error> {
 
         // Grab more shares
         let duo_user_id = duo_user_ids.get(i).context("ran out of user ids")?;
-        let duo_client = duo::DuoClient::new(
-            duo_domain.clone(),
-            duo_ikey.clone(),
-            duo_skey.clone(),
-            duo_user_id.into(),
-        );
 
-        let auth_result = duo_client.request_auth(i + 1).await?;
+        let auth_result = duo_client.request_auth(duo_user_id, i + 1).await?;
         if auth_result {
             println!("user approved share {}", i + 1);
             used_shares.push(available_shares.remove(0));
