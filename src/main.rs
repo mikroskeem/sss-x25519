@@ -4,6 +4,7 @@ use std::{
     env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -114,7 +115,24 @@ async fn main() -> Result<(), Error> {
         // Grab more shares
         let duo_user_id = duo_user_ids.get(i).context("ran out of user ids")?;
 
-        let auth_result = duo_client.request_auth(duo_user_id, i + 1).await?;
+        let preauth = duo_client.preauth(duo_user_id).await?;
+        let auth_result = match preauth {
+            duo::types::PreauthResponse::Allow => true,
+            duo::types::PreauthResponse::Deny => false,
+            duo::types::PreauthResponse::Enroll { enroll_portal_url } => {
+                println!("enroll: {}", enroll_portal_url);
+                while let duo::types::PreauthResponse::Enroll { .. } =
+                    duo_client.preauth(duo_user_id).await?
+                {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+
+                // TODO
+                duo_client.auth(duo_user_id, i + 1).await?
+            }
+            duo::types::PreauthResponse::Auth { .. } => duo_client.auth(duo_user_id, i + 1).await?,
+        };
+
         if auth_result {
             println!("user approved share {}", i + 1);
             used_shares.push(available_shares.remove(0));

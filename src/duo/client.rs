@@ -3,7 +3,10 @@ use std::{future::Future, sync::Arc, time::Duration};
 use reqwest::{Method, StatusCode, Url};
 use serde::Deserialize;
 
-use super::request::{DuoRequest, Parameters};
+use super::{
+    request::{DuoRequest, Parameters},
+    types::PreauthResponse,
+};
 use crate::Error;
 
 pub struct DuoClient(Arc<DuoClientInner>);
@@ -69,7 +72,16 @@ impl DuoClient {
         }
     }
 
-    pub fn request_auth<S: Into<String>>(
+    pub fn preauth<S: Into<String>>(
+        &self,
+        user_id: S,
+    ) -> impl Future<Output = Result<PreauthResponse, Error>> {
+        let this = Arc::clone(&self.0);
+
+        async move { DuoClient::request_preauth(this, user_id).await }
+    }
+
+    pub fn auth<S: Into<String>>(
         &self,
         user_id: S,
         share_n: usize,
@@ -77,11 +89,11 @@ impl DuoClient {
         let this = Arc::clone(&self.0);
 
         async move {
-            let txid = DuoClient::send_auth_request(this.clone(), user_id, share_n).await?;
+            let txid = DuoClient::request_auth(this.clone(), user_id, share_n).await?;
             let mut status: Option<bool>;
 
             loop {
-                status = DuoClient::auth_request_status(this.clone(), &txid).await?;
+                status = DuoClient::request_auth_status(this.clone(), &txid).await?;
                 match status {
                     None => tokio::time::sleep(Duration::from_secs(2)).await,
                     Some(v) => return Ok(v),
@@ -90,7 +102,35 @@ impl DuoClient {
         }
     }
 
-    async fn send_auth_request<S: Into<String>>(
+    async fn request_preauth<S: Into<String>>(
+        this: Arc<DuoClientInner>,
+        user_id: S,
+    ) -> Result<PreauthResponse, Error> {
+        let url = Url::parse(format!("https://{}", this.api_domain).as_str())?;
+
+        let mut parameters = Parameters::default();
+        parameters.set("user_id", user_id);
+
+        let request = DuoRequest::new(url, Method::POST, "/auth/v2/preauth", parameters).build(
+            &this.client,
+            &this.ikey,
+            &this.skey,
+        )?;
+
+        let response = this.client.execute(request).await?;
+        if response.status() != StatusCode::OK {
+            // TODO: handle error properly
+            let status = response.status();
+            let errbody: serde_json::Value = response.json().await?;
+            println!("err body={:?}", errbody);
+            return Err(Error::from(format!("status code={}", status)));
+        }
+
+        let body: DuoResponse<PreauthResponse> = response.json().await?;
+        Ok(body.response)
+    }
+
+    async fn request_auth<S: Into<String>>(
         this: Arc<DuoClientInner>,
         user_id: S,
         share_n: usize,
@@ -130,7 +170,7 @@ impl DuoClient {
         Ok(body.response.txid)
     }
 
-    async fn auth_request_status(
+    async fn request_auth_status(
         this: Arc<DuoClientInner>,
         txid: &str,
     ) -> Result<Option<bool>, Error> {
