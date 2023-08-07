@@ -12,6 +12,7 @@ use crypto_box::{
     aead::{generic_array::GenericArray, Aead},
     SalsaBox,
 };
+use duo_auth::types::{PreauthRequest, AuthRequest};
 use ed25519_compact::x25519::KeyPair;
 use rand::RngCore;
 
@@ -40,7 +41,8 @@ async fn main() -> Result<(), Error> {
     }
     let k = std::cmp::max((n / 3) * 2, 1);
 
-    let duo_client = duo_auth::DuoClient::new(duo_domain.clone(), duo_ikey.clone(), duo_skey.clone())?;
+    let duo_client =
+        duo_auth::DuoClient::new(duo_domain.clone(), duo_ikey.clone(), duo_skey.clone())?;
     let _ = duo_client.check().await?;
 
     let data_dir = PathBuf::from("./data");
@@ -114,8 +116,20 @@ async fn main() -> Result<(), Error> {
         // Grab more shares
         let duo_user_id = duo_user_ids.get(i).context("ran out of user ids")?;
 
+        fn preauth_user<S: Into<String>>(user_id: S) -> PreauthRequest {
+            PreauthRequest {
+                user: duo_auth::types::User::UserId { id: user_id.into() },
+                ipaddr: None,
+                hostname: None,
+                trusted_device_token: None,
+            }
+        }
+
         let auth_result = loop {
-            let result = match duo_client.preauth(duo_user_id).await? {
+            let result = match duo_client
+                .preauth(preauth_user(duo_user_id))
+                .await?
+            {
                 duo_auth::types::PreauthResponse::Allow => true,
                 duo_auth::types::PreauthResponse::Deny => false,
                 duo_auth::types::PreauthResponse::Enroll { enroll_portal_url } => {
@@ -123,7 +137,7 @@ async fn main() -> Result<(), Error> {
 
                     // Loop until enroll status changes
                     while let duo_auth::types::PreauthResponse::Enroll { .. } =
-                        duo_client.preauth(duo_user_id).await?
+                        duo_client.preauth(preauth_user(duo_user_id)).await?
                     {
                         tokio::time::sleep(Duration::from_secs(2)).await;
                     }
@@ -137,7 +151,20 @@ async fn main() -> Result<(), Error> {
                         })
                     });
 
-                    auto_capable && duo_client.auth(duo_user_id, i + 1).await?
+                    let share_n = i + 1;
+                    let auth_data = AuthRequest {
+                        user: duo_auth::types::User::UserId { id: duo_user_id.clone().into() },
+                        factor: duo_auth::types::AuthRequestFactor::Auto {
+                            device: Some("auto".into()),
+                            r#type: Some("Vault unseal".into()),
+                            display_username: Some(format!("Share {}", share_n).into()),
+                            push_info: None,
+                        },
+                        ipaddr: None,
+                        hostname: None,
+                    };
+
+                    auto_capable && duo_client.auth_wait(auth_data).await?
                 }
             };
 

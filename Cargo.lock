@@ -354,7 +354,7 @@ dependencies = [
 [[package]]
 name = "duo-auth"
 version = "0.0.1"
-source = "git+https://github.com/ZentriaMC/duo-auth.git?rev=2c55cc0988af408876f1df9da37cd04ce5d88059#2c55cc0988af408876f1df9da37cd04ce5d88059"
+source = "git+https://github.com/ZentriaMC/duo-auth.git?rev=e58c7a8462f05cf0168b13ba6995e66c00139b14#e58c7a8462f05cf0168b13ba6995e66c00139b14"
 dependencies = [
  "chrono",
  "hex",

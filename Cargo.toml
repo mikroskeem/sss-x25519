@@ -14,4 +14,4 @@ hex = "0.4.3"
 rand = "0.8.5"
 sha256 = "1.3.0"
 tokio = { version = "1.29.1", features = ["rt-multi-thread", "macros"] }
-duo-auth = { git = "https://github.com/ZentriaMC/duo-auth.git", rev = "2c55cc0988af408876f1df9da37cd04ce5d88059" }
+duo-auth = { git = "https://github.com/ZentriaMC/duo-auth.git", rev = "e58c7a8462f05cf0168b13ba6995e66c00139b14" }
