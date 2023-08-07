@@ -10,7 +10,7 @@ structstruck::strike! {
     pub enum PreauthResponse {
         Auth {
             devices: Vec<pub struct Device {
-                pub capabilities: Option<Vec<#[serde(rename_all = "snake_case")] pub enum DeviceCapability {
+                pub capabilities: Option<Vec<#[derive(PartialEq, Eq, PartialOrd, Ord)] #[serde(rename_all = "snake_case")] pub enum DeviceCapability {
                     Auto,
                     Push,
                     Sms,
@@ -24,7 +24,7 @@ structstruck::strike! {
                 #[serde_as(as = "NoneAsEmptyString")]
                 pub number: Option<String>,
                 pub sms_nextcode: Option<String>,
-                pub r#type: #[serde(rename_all = "snake_case")] pub enum DeviceType {
+                pub r#type: #[derive(PartialEq, Eq, PartialOrd, Ord)] #[serde(rename_all = "snake_case")] pub enum DeviceType {
                     Phone,
                     Token,
                 },
