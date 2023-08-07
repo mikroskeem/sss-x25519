@@ -15,7 +15,6 @@ use crypto_box::{
 use ed25519_compact::x25519::KeyPair;
 use rand::RngCore;
 
-mod duo;
 #[gf256::shamir::shamir]
 pub mod shamir {}
 
@@ -41,7 +40,7 @@ async fn main() -> Result<(), Error> {
     }
     let k = std::cmp::max((n / 3) * 2, 1);
 
-    let duo_client = duo::DuoClient::new(duo_domain.clone(), duo_ikey.clone(), duo_skey.clone())?;
+    let duo_client = duo_auth::DuoClient::new(duo_domain.clone(), duo_ikey.clone(), duo_skey.clone())?;
     let _ = duo_client.check().await?;
 
     let data_dir = PathBuf::from("./data");
@@ -117,13 +116,13 @@ async fn main() -> Result<(), Error> {
 
         let auth_result = loop {
             let result = match duo_client.preauth(duo_user_id).await? {
-                duo::types::PreauthResponse::Allow => true,
-                duo::types::PreauthResponse::Deny => false,
-                duo::types::PreauthResponse::Enroll { enroll_portal_url } => {
+                duo_auth::types::PreauthResponse::Allow => true,
+                duo_auth::types::PreauthResponse::Deny => false,
+                duo_auth::types::PreauthResponse::Enroll { enroll_portal_url } => {
                     println!("enroll: {}", enroll_portal_url);
 
                     // Loop until enroll status changes
-                    while let duo::types::PreauthResponse::Enroll { .. } =
+                    while let duo_auth::types::PreauthResponse::Enroll { .. } =
                         duo_client.preauth(duo_user_id).await?
                     {
                         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -131,10 +130,10 @@ async fn main() -> Result<(), Error> {
 
                     continue;
                 }
-                duo::types::PreauthResponse::Auth { ref devices } => {
+                duo_auth::types::PreauthResponse::Auth { ref devices } => {
                     let auto_capable = devices.iter().any(|device| {
                         device.capabilities.as_ref().map_or(false, |capabilities| {
-                            capabilities.contains(&duo::types::DeviceCapability::Auto)
+                            capabilities.contains(&duo_auth::types::DeviceCapability::Auto)
                         })
                     });
 
