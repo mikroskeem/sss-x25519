@@ -1,6 +1,9 @@
 use serde::Deserialize;
+use serde_with::serde_as;
+use serde_with::NoneAsEmptyString;
 
 structstruck::strike! {
+    #[strikethrough[serde_as]]
     #[strikethrough[derive(Deserialize, Debug)]]
     #[serde(rename_all = "snake_case")]
     #[serde(tag = "result")]
@@ -16,8 +19,10 @@ structstruck::strike! {
                 }>>,
                 pub device: String,
                 pub display_name: Option<String>,
-                pub name: String,
-                pub number: String,
+                #[serde_as(as = "NoneAsEmptyString")]
+                pub name: Option<String>,
+                #[serde_as(as = "NoneAsEmptyString")]
+                pub number: Option<String>,
                 pub sms_nextcode: Option<String>,
                 pub r#type: #[serde(rename_all = "snake_case")] pub enum DeviceType {
                     Phone,
