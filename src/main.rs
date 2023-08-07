@@ -131,8 +131,14 @@ async fn main() -> Result<(), Error> {
 
                     continue;
                 }
-                duo::types::PreauthResponse::Auth { .. } => {
-                    duo_client.auth(duo_user_id, i + 1).await?
+                duo::types::PreauthResponse::Auth { ref devices } => {
+                    let auto_capable = devices.iter().any(|device| {
+                        device.capabilities.as_ref().map_or(false, |capabilities| {
+                            capabilities.contains(&duo::types::DeviceCapability::Auto)
+                        })
+                    });
+
+                    auto_capable && duo_client.auth(duo_user_id, i + 1).await?
                 }
             };
 
